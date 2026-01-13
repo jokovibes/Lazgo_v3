@@ -192,7 +192,8 @@ const OutputDisplay: React.FC<{
     output: GeneratedOutput | null; 
     isLoading: boolean;
     error: string | null;
-}> = ({ output, isLoading, error }) => {
+    dailyRecords: TardinessRecord[];
+}> = ({ output, isLoading, error, dailyRecords }) => {
     const [copiedStates, setCopiedStates] = useState({
       whatsapp: false,
     });
@@ -202,6 +203,47 @@ const OutputDisplay: React.FC<{
             setCopiedStates(prev => ({ ...prev, [type]: true }));
             setTimeout(() => setCopiedStates(prev => ({ ...prev, [type]: false })), 2000);
         });
+    };
+
+    const exportToPDF = () => {
+        if (!output) return;
+        const doc = new jsPDF();
+        const dateStr = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+        
+        doc.setFontSize(20);
+        doc.text("Laporan Harian LazGo", 14, 20);
+        doc.setFontSize(10);
+        doc.text(`Tanggal: ${dateStr}`, 14, 28);
+        
+        doc.setFontSize(12);
+        doc.text("Ringkasan AI:", 14, 40);
+        doc.setFontSize(10);
+        const summaryLines = doc.splitTextToSize(output.summary, 180);
+        doc.text(summaryLines, 14, 46);
+        
+        autoTable(doc, {
+            startY: 46 + (summaryLines.length * 5),
+            head: [['Nama', 'Kelas', 'Jam', 'Durasi', 'Kategori']],
+            body: dailyRecords.map(r => [r.name, r.className, r.arrivalTime, `${r.durationMinutes} mnt`, r.category]),
+        });
+        
+        doc.save(`LazGo_Harian_${new Date().toISOString().split('T')[0]}.pdf`);
+    };
+
+    const exportToExcel = () => {
+        if (dailyRecords.length === 0) return;
+        const wsData = dailyRecords.map(r => ({
+            "Nama Siswa": r.name,
+            "Kelas": r.className,
+            "Jam Kedatangan": r.arrivalTime,
+            "Durasi (Menit)": r.durationMinutes,
+            "Kategori": r.category,
+            "Alasan": r.reason || "-"
+        }));
+        const ws = XLSX.utils.json_to_sheet(wsData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Rekap Harian");
+        XLSX.writeFile(wb, `LazGo_Harian_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
     
     if (isLoading && !output) {
@@ -230,18 +272,27 @@ const OutputDisplay: React.FC<{
     
     return (
         <div className="space-y-6 text-gray-800 dark:text-gray-200">
-            <div className="p-4 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-md">
+            <div className="flex justify-end gap-2 -mb-2">
+                <button onClick={exportToPDF} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 transition-colors shadow-sm">
+                    <PdfIcon className="w-3.5 h-3.5" /> PDF
+                </button>
+                <button onClick={exportToExcel} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700 transition-colors shadow-sm">
+                    <ExcelIcon className="w-3.5 h-3.5" /> EXCEL
+                </button>
+            </div>
+
+            <div className="p-4 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-md border border-white/20">
                 <h3 className="font-semibold text-lg flex items-center gap-2 text-sky-600 dark:text-sky-400"><SummaryIcon className="w-5 h-5" /> Ringkasan Keterlambatan</h3>
                 <p className="mt-2 text-sm whitespace-pre-wrap">{output.summary}</p>
             </div>
-             <div className="p-4 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-md relative">
+             <div className="p-4 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-md relative border border-white/20">
                 <h3 className="font-semibold text-lg flex items-center gap-2 text-green-600 dark:text-green-400"><WhatsAppIcon className="w-5 h-5" /> Pesan WhatsApp untuk Orang Tua</h3>
                 <p className="mt-2 text-sm whitespace-pre-wrap">{output.whatsapp}</p>
                  <button onClick={() => handleCopy(output.whatsapp, 'whatsapp')} className="absolute top-3 right-3 p-2 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors">
                      {copiedStates.whatsapp ? <CheckIcon className="w-4 h-4 text-green-500" /> : <CopyIcon className="w-4 h-4 text-gray-500 dark:text-gray-300" />}
                  </button>
             </div>
-             <div className="p-4 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-md">
+             <div className="p-4 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-md border border-white/20">
                 <h3 className="font-semibold text-lg flex items-center gap-2 text-indigo-600 dark:text-indigo-400"><RecapIcon className="w-5 h-5" /> Rekap Harian</h3>
                 <p className="mt-2 text-sm whitespace-pre-wrap">{output.dailyRecap}</p>
             </div>
@@ -520,25 +571,6 @@ const MonthlyReport: React.FC<{ allRecords: TardinessRecord[] }> = ({ allRecords
 
     const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
-    const availablePeriods = useMemo(() => {
-        const periods = new Map<number, Set<number>>();
-        allRecords.forEach(rec => {
-            const date = new Date(rec.id);
-            const year = date.getFullYear();
-            const month = date.getMonth();
-            if (!periods.has(year)) {
-                periods.set(year, new Set());
-            }
-            periods.get(year)!.add(month);
-        });
-        return periods;
-    }, [allRecords]);
-
-    const availableYears = useMemo(() => Array.from(availablePeriods.keys()).sort((a, b) => Number(b) - Number(a)), [availablePeriods]);
-    const availableMonths = useMemo(() => {
-        return availablePeriods.has(selectedYear) ? Array.from(availablePeriods.get(selectedYear)!).sort((a, b) => Number(a) - Number(b)) : [];
-    }, [selectedYear, availablePeriods]);
-
     const filteredRecords = useMemo(() => {
         return allRecords.filter(rec => {
             const recDate = new Date(rec.id);
@@ -563,6 +595,47 @@ const MonthlyReport: React.FC<{ allRecords: TardinessRecord[] }> = ({ allRecords
         }
     };
 
+    const exportMonthlyPDF = () => {
+        if (!reportData) return;
+        const doc = new jsPDF();
+        doc.setFontSize(20);
+        doc.text(`Laporan Bulanan LazGo: ${monthNames[selectedMonth]} ${selectedYear}`, 14, 20);
+        
+        doc.setFontSize(10);
+        const reportLines = doc.splitTextToSize(reportData.report.replace(/\*\*/g, ''), 180);
+        doc.text(reportLines, 14, 30);
+        
+        autoTable(doc, {
+            startY: 35 + (reportLines.length * 5),
+            head: [['Tanggal', 'Nama', 'Kelas', 'Durasi', 'Kategori']],
+            body: filteredRecords.map(r => [
+                new Date(r.id).toLocaleDateString('id-ID'),
+                r.name,
+                r.className,
+                `${r.durationMinutes} mnt`,
+                r.category
+            ]),
+        });
+        
+        doc.save(`LazGo_Bulanan_${monthNames[selectedMonth]}_${selectedYear}.pdf`);
+    };
+
+    const exportMonthlyExcel = () => {
+        if (filteredRecords.length === 0) return;
+        const wsData = filteredRecords.map(r => ({
+            "Tanggal": new Date(r.id).toLocaleDateString('id-ID'),
+            "Nama Siswa": r.name,
+            "Kelas": r.className,
+            "Jam": r.arrivalTime,
+            "Durasi (Menit)": r.durationMinutes,
+            "Kategori": r.category
+        }));
+        const ws = XLSX.utils.json_to_sheet(wsData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Laporan Bulanan");
+        XLSX.writeFile(wb, `LazGo_Bulanan_${monthNames[selectedMonth]}_${selectedYear}.xlsx`);
+    };
+
     return (
         <div className="space-y-6">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md">
@@ -577,7 +650,7 @@ const MonthlyReport: React.FC<{ allRecords: TardinessRecord[] }> = ({ allRecords
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Tahun</label>
                         <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm sm:text-sm">
-                            {availableYears.length > 0 ? availableYears.map(y => <option key={y} value={y}>{y}</option>) : <option value={selectedYear}>{selectedYear}</option>}
+                             {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
                     </div>
                     <div className="flex items-end">
@@ -588,8 +661,20 @@ const MonthlyReport: React.FC<{ allRecords: TardinessRecord[] }> = ({ allRecords
                 </div>
             </div>
 
-            <div className="bg-blue-800/30 dark:bg-white/5 backdrop-blur-md p-6 rounded-xl shadow-lg min-h-[300px]">
-                <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2"><InsightIcon className="w-5 h-5"/> Hasil Analisis AI Bulanan</h2>
+            <div className="bg-blue-800/30 dark:bg-white/5 backdrop-blur-md p-6 rounded-xl shadow-lg min-h-[300px] relative">
+                <div className="flex justify-between items-center mb-4 border-b border-white/20 pb-3">
+                    <h2 className="text-xl font-semibold text-white flex items-center gap-2"><InsightIcon className="w-5 h-5"/> Hasil Analisis AI Bulanan</h2>
+                    {reportData && !isLoading && (
+                         <div className="flex gap-2">
+                            <button onClick={exportMonthlyPDF} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors">
+                                <PdfIcon className="w-4 h-4" /> PDF
+                            </button>
+                            <button onClick={exportMonthlyExcel} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors">
+                                <ExcelIcon className="w-4 h-4" /> EXCEL
+                            </button>
+                        </div>
+                    )}
+                </div>
                 {isLoading && <div className="text-white text-center py-10 flex flex-col items-center gap-3"><NotificationIcon className="w-8 h-8 animate-ping" /> Menganalisis ribuan data keterlambatan...</div>}
                 {reportData?.report && <div className="prose prose-sm prose-invert max-w-none text-white" dangerouslySetInnerHTML={{ __html: reportData.report.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br />') }} />}
                 {!isLoading && !reportData && <p className="text-sky-200 text-center py-10">Silakan pilih bulan/tahun lalu klik 'Buat Rekap Bulanan' untuk memulai analisis cerdas.</p>}
@@ -917,7 +1002,7 @@ export default function App() {
                 </div>
                 <div className="bg-blue-800/40 dark:bg-white/5 backdrop-blur-lg p-6 rounded-xl shadow-2xl border border-white/10">
                   <h2 className="text-xl font-bold text-white border-b border-white/20 pb-3 mb-4 flex items-center gap-2"><InsightIcon className="w-5 h-5" /> Analisis Cerdas LazGo</h2>
-                  <OutputDisplay output={output} isLoading={isReportLoading} error={error} />
+                  <OutputDisplay output={output} isLoading={isReportLoading} error={error} dailyRecords={dailyRecords} />
                 </div>
               </div>
           )}
